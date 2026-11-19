@@ -76,22 +76,30 @@ def print_report(report):
     print(json.dumps(payload, indent=2))
 
 
-def append_result(report, settings, loss_history, path=RESULTS):
+def append_result(report, settings, loss_history, best_epoch, path=RESULTS):
     """Append one completed run. The CSV stores nested diagnostics as JSON."""
     path = Path(path)
     fieldnames = ["id", "time_utc", *settings.keys(), "weighted_f1", "soft_cons", "hard_cons",
-                  "accuracy", "confusion_matrix", "pair_errors", "loss_history"]
+                  "accuracy", "confusion_matrix", "pair_errors", "loss_history", "best_epoch"]
     next_id = 1
     if path.exists() and path.stat().st_size:
         with path.open(encoding="utf-8-sig", newline="") as source:
             reader = csv.DictReader(source)
-            if reader.fieldnames != fieldnames:
+            old_fields = reader.fieldnames
+            rows = list(reader)
+        if old_fields != fieldnames:
+            # Older runs predate checkpoint selection and patience; leave those values blank.
+            if not old_fields or set(old_fields) != set(fieldnames) - {"patience", "best_epoch"}:
                 raise ValueError(f"Existing results file has incompatible columns: {path}")
-            next_id = max((int(row["id"]) for row in reader), default=0) + 1
+            with path.open("w", encoding="utf-8", newline="") as output:
+                writer = csv.DictWriter(output, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+        next_id = max((int(row["id"]) for row in rows), default=0) + 1
     classification, consistency = report.classification, report.consistency
     row = {"id": next_id, "time_utc": datetime.now(timezone.utc).isoformat(), **settings,
            "weighted_f1": report.weighted_f1, "soft_cons": report.soft_cons, "hard_cons": report.hard_cons,
-           "accuracy": classification.accuracy,
+           "accuracy": classification.accuracy, "best_epoch": best_epoch,
            "confusion_matrix": json.dumps(classification.confusion_matrix, sort_keys=True),
            "pair_errors": json.dumps(consistency.pair_errors), "loss_history": json.dumps(loss_history)}
     new_file = not path.exists() or not path.stat().st_size

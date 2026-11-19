@@ -19,7 +19,9 @@ Evaluate a saved model by result ID:
 python Main.py --evaluate-saved 1
 ```
 
-Training results, settings and metrics are saved in `results.csv`. Create plots by result ID:
+The model is evaluated and, with `--save`, exported.
+
+Training results, settings, and metrics are saved in `results.csv`. Create plots by result ID:
 
 ```bash
 python Visualization.py 1 loss

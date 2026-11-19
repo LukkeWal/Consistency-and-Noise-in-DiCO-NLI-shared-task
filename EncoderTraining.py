@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import torch
 from transformers import (AutoModelForSequenceClassification, AutoTokenizer,
-                          DataCollatorWithPadding, Trainer, TrainingArguments, set_seed)
+                          DataCollatorWithPadding, EarlyStoppingCallback, Trainer, TrainingArguments, set_seed)
 from transformers.trainer_callback import PrinterCallback, ProgressCallback
 
 from DataHandler import LABELS, LABEL_TO_ID
@@ -37,6 +37,7 @@ class TrainingConfig:
     weight_decay: float = 0.0
     seed: int = 42
     precision: str = "float32"
+    patience: int = 3
 
 
 class PairDataset(torch.utils.data.Dataset):
@@ -58,11 +59,13 @@ class PairDataset(torch.utils.data.Dataset):
 
 
 def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
-    """Return the trained model, tokenizer and per-epoch loss history."""
+    """Return the best model, tokenizer, loss history and best epoch."""
     if config.model not in MODEL_IDS:
         raise ValueError(f"Unknown model {config.model!r}; choose from {', '.join(MODEL_IDS)}")
     if config.epochs <= 0 or config.batch_size < 1 or config.max_length < 2 or config.gradient_accumulation_steps < 1 or config.learning_rate <= 0 or config.weight_decay < 0:
         raise ValueError("Invalid training hyperparameters")
+    if config.patience < 1:
+        raise ValueError("patience must be a positive number of epochs")
     if config.precision not in {"float32", "float16", "bfloat16"}:
         raise ValueError("precision must be float32, float16, or bfloat16")
     if config.precision != "float32" and not torch.cuda.is_available():
@@ -84,8 +87,7 @@ def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
     model.config.pad_token_id = tokenizer.pad_token_id
     dataset = PairDataset(pairs, labels, tokenizer, config.max_length)
     val_dataset = PairDataset(val_pairs, val_labels, tokenizer, config.max_length)
-    # Trainer still needs an output directory, but intermediate checkpoints are
-    # disabled; no model is persisted unless explicitly requested.
+    # Checkpoints are temporary; the best weights are loaded before cleanup.
     with TemporaryDirectory(prefix="dico_training_") as temporary_dir:
         arguments = TrainingArguments(
             output_dir=temporary_dir, num_train_epochs=config.epochs,
@@ -93,23 +95,32 @@ def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             learning_rate=config.learning_rate, weight_decay=config.weight_decay,
             seed=config.seed, fp16=config.precision == "float16", bf16=config.precision == "bfloat16",
-            save_strategy="no", report_to="none", logging_strategy="epoch",
+            save_strategy="epoch", save_total_limit=2, report_to="none", logging_strategy="epoch",
             eval_strategy="epoch", per_device_eval_batch_size=config.batch_size,
+            load_best_model_at_end=True, metric_for_best_model="eval_loss", greater_is_better=False,
         )
         trainer = Trainer(model=model, args=arguments, train_dataset=dataset, eval_dataset=val_dataset,
                           data_collator=DataCollatorWithPadding(tokenizer), processing_class=tokenizer)
         trainer.remove_callback(ProgressCallback)
         trainer.remove_callback(PrinterCallback)
         trainer.add_callback(TrainingProgress())
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=config.patience))
         trainer.train()
         train_logs = [entry for entry in trainer.state.log_history if "loss" in entry]
         eval_logs = [entry for entry in trainer.state.log_history if "eval_loss" in entry]
         if len(train_logs) != len(eval_logs) or not train_logs:
             raise RuntimeError("Could not match training and validation loss logs")
+        if not trainer.state.best_model_checkpoint:
+            raise RuntimeError("Training did not produce a best checkpoint")
+        best_step = int(trainer.state.best_model_checkpoint.rsplit("-", 1)[-1])
+        best_logs = [entry for entry in eval_logs if entry["step"] == best_step]
+        if len(best_logs) != 1:
+            raise RuntimeError("Could not identify the best checkpoint epoch")
+        best_epoch = best_logs[0]["epoch"]
         loss_history = []
         for train_log, eval_log in zip(train_logs, eval_logs):
             if abs(train_log["epoch"] - eval_log["epoch"]) > 1e-6:
                 raise RuntimeError("Training and validation losses have different epoch values")
             loss_history.append({"epoch": train_log["epoch"], "train_loss": train_log["loss"],
                                  "val_loss": eval_log["eval_loss"]})
-    return model, tokenizer, loss_history
+    return trainer.model, tokenizer, loss_history, best_epoch

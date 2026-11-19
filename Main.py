@@ -16,6 +16,7 @@ def main():
     mode.add_argument("--evaluate-saved", type=int, metavar="ID", help="Evaluate the saved model for a result ID")
     parser.add_argument("--save", action="store_true", help="Save the trained model and tokenizer in saved_models")
     parser.add_argument("--epochs", type=float, default=3)
+    parser.add_argument("--patience", type=int, default=3, help="Stop after this many epochs without validation loss improvement (default: 3)")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--max-length", type=int, default=256)
@@ -47,10 +48,10 @@ def main():
                             learning_rate=args.learning_rate, max_length=args.max_length,
                             gradient_accumulation_steps=args.gradient_accumulation_steps,
                             weight_decay=args.weight_decay, seed=args.seed,
-                            precision=args.precision)
-    model, tokenizer, loss_history = train_encoder(pairs, labels, val_pairs, val_labels, config)
+                            precision=args.precision, patience=args.patience)
+    model, tokenizer, loss_history, best_epoch = train_encoder(pairs, labels, val_pairs, val_labels, config)
     report = evaluate(model, tokenizer, max_length=config.max_length, batch_size=config.batch_size)
-    result_id = append_result(report, asdict(config), loss_history)
+    result_id = append_result(report, asdict(config), loss_history, best_epoch)
     print(f"Saved result {result_id} to results.csv")
     if args.save:
         target = project_dir / "saved_models" / f"{result_id}_{args.model}"
