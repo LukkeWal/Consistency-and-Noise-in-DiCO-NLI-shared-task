@@ -23,6 +23,7 @@ VALID_LABELS = set(REVERSE_LABEL) | {"NEGATIVE_OTHER"}
 
 
 def clean_file(path, report):
+    is_dev = "_dev_track1_" in path.name
     with path.open(encoding="utf-8-sig", newline="") as source:
         reader = csv.DictReader(source)
         fields = reader.fieldnames or []
@@ -42,8 +43,7 @@ def clean_file(path, report):
                 raise ValueError(f"{path.name}: invalid label {label!r} at CSV line {line}")
             rows.append((line, row))
 
-    # Contradictions are resolved conservatively: remove every row for an
-    # ambiguous unordered pair, rather than arbitrarily choosing a label.
+    # Identify every row belonging to an ambiguous unordered pair.
     groups = defaultdict(list)
     for line, row in rows:
         groups[tuple(sorted((row["text1"], row["text2"])))].append((line, row))
@@ -82,13 +82,21 @@ def clean_file(path, report):
     seen = {}
     for line, row in rows:
         if line in inconsistent:
-            report.append((path.name, line, row["instance_id"], "inconsistent", inconsistent[line]))
-            continue
+            if is_dev:
+                print(f"WARNING: {path.name}, CSV line {line}, {row['instance_id']}: inconsistent: {inconsistent[line]} (kept)")
+            else:
+                report.append((path.name, line, row["instance_id"], "inconsistent", inconsistent[line]))
+                continue
         key = (row["text1"], row["text2"], row["label"])
         if key in seen:
-            report.append((path.name, line, row["instance_id"], "duplicate", f"same ordered texts and label as CSV line {seen[key]}"))
-            continue
-        seen[key] = line
+            details = f"same ordered texts and label as CSV line {seen[key]}"
+            if is_dev:
+                print(f"WARNING: {path.name}, CSV line {line}, {row['instance_id']}: duplicate: {details} (kept)")
+            else:
+                report.append((path.name, line, row["instance_id"], "duplicate", details))
+                continue
+        else:
+            seen[key] = line
         kept.append(row)
 
     with (OUTPUT_DIR / path.name).open("w", encoding="utf-8", newline="") as output:
