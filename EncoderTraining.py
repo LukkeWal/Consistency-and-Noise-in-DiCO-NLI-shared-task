@@ -5,8 +5,9 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import torch
 from transformers import (AutoModelForSequenceClassification, AutoTokenizer,
-                          DataCollatorWithPadding, EarlyStoppingCallback, Trainer, TrainingArguments, set_seed)
+                          DataCollatorWithPadding, EarlyStoppingCallback, Trainer, TrainingArguments)
 from transformers.trainer_callback import PrinterCallback, ProgressCallback
+from transformers.trainer_utils import enable_full_determinism, set_seed
 
 from DataHandler import LABELS, LABEL_TO_ID
 
@@ -38,6 +39,7 @@ class TrainingConfig:
     seed: int = 42
     precision: str = "float32"
     patience: int = 3
+    deterministic: bool = False
 
 
 class PairDataset(torch.utils.data.Dataset):
@@ -73,7 +75,10 @@ def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
     # Validate before loading large model weights.
     if labels is None or len(pairs) == 0 or len(pairs) != len(labels):
         raise ValueError("Training requires nonempty text pairs and one label per pair")
-    set_seed(config.seed)
+    if config.deterministic:
+        enable_full_determinism(config.seed)
+    else:
+        set_seed(config.seed)
     model_id = MODEL_IDS[config.model]
     trust_remote_code = config.model == "gte-en-mlm-base"
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
@@ -94,7 +99,8 @@ def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
             per_device_train_batch_size=config.batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             learning_rate=config.learning_rate, weight_decay=config.weight_decay,
-            seed=config.seed, fp16=config.precision == "float16", bf16=config.precision == "bfloat16",
+            seed=config.seed, data_seed=config.seed, full_determinism=config.deterministic,
+            fp16=config.precision == "float16", bf16=config.precision == "bfloat16",
             save_strategy="epoch", save_total_limit=2, report_to="none", logging_strategy="epoch",
             eval_strategy="epoch", per_device_eval_batch_size=config.batch_size,
             load_best_model_at_end=True, metric_for_best_model="eval_loss", greater_is_better=False,
