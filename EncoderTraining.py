@@ -55,6 +55,7 @@ class TrainingConfig:
     precision: str = "float32"
     patience: int = 3
     deterministic: bool = False
+    train_limit: int | None = None  # Only used for quick tests; None means the full training set.
 
 
 class PairDataset(torch.utils.data.Dataset):

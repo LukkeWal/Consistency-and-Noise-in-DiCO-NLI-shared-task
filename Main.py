@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import statistics
 
+import numpy as np
+
 from DataHandler import read_transform_dico
 from EncoderTraining import MODEL_IDS, TrainingConfig, train_encoder
 from Evaluator import append_result, evaluate, load_saved_model, print_report
@@ -70,9 +72,12 @@ def main():
     parser.add_argument("--deterministic", action="store_true",
                         help="Force deterministic CUDA kernels for bit-for-bit reruns (slower)")
     parser.add_argument("--precision", choices=("float32", "float16", "bfloat16"), default="float32")
+    parser.add_argument("--train-limit", type=int, metavar="N",
+                        help="Train on a fixed random subset of N training rows (for quick tests only)")
     args = parser.parse_args()
     if args.num_seeds < 1:
         parser.error("--num-seeds must be at least 1")
+<<<<<<< Updated upstream
     if args.tune_trials < 0:
         parser.error("--tune-trials must be nonnegative")
     if args.tune_trials:
@@ -81,12 +86,17 @@ def main():
         if not args.epochs.is_integer() or args.epochs < 1:
             parser.error("--tune-trials requires a positive integer --epochs")
     seed_list = [BASE_SEED + i for i in range(args.num_seeds)]
+=======
+    if args.train_limit is not None and args.train_limit < 1:
+        parser.error("--train-limit must be at least 1")
+    seed_list = [args.seed + i for i in range(args.num_seeds)]
+>>>>>>> Stashed changes
     project_dir = Path(__file__).resolve().parent
     if args.evaluate_saved is not None:
         if args.save:
             parser.error("--save cannot be used with --evaluate-saved")
-        if args.num_seeds != 1 or args.deterministic:
-            parser.error("Seed options cannot be used with --evaluate-saved")
+        if args.num_seeds != 1 or args.deterministic or args.seed != BASE_SEED or args.train_limit is not None:
+            parser.error("Training options cannot be used with --evaluate-saved")
         paths = list((project_dir / "saved_models").glob(f"{args.evaluate_saved}_*"))
         if len(paths) != 1 or not paths[0].is_dir():
             parser.error(f"No unique saved model found for result ID {args.evaluate_saved}")
@@ -98,6 +108,11 @@ def main():
     if not train_path.is_file():
         parser.error(f"Cleaned training data not found at {train_path}. Run python PreProcessing.py first.")
     _, pairs, labels = read_transform_dico(train_path)
+    if args.train_limit is not None and args.train_limit < len(labels):
+        # Same subset for every seed and every call, so test runs stay comparable.
+        keep = np.sort(np.random.default_rng(BASE_SEED).choice(len(labels), args.train_limit, replace=False))
+        print(f"Training on {args.train_limit} of {len(labels)} training rows (--train-limit)")
+        pairs, labels = pairs[keep], labels[keep]
     val_path = project_dir / "data/val.csv"
     if not val_path.is_file():
         parser.error(f"Validation data not found at {val_path}. Run python PreProcessing.py first.")
@@ -111,10 +126,14 @@ def main():
                                 gradient_accumulation_steps=args.gradient_accumulation_steps,
                                 weight_decay=args.weight_decay, seed=seed,
                                 precision=args.precision, patience=args.patience,
+<<<<<<< Updated upstream
                                 deterministic=args.deterministic)
         if args.tune_trials:
             learning_rate = tune_learning_rate(pairs, labels, val_pairs, val_labels, config, args.tune_trials)
             config = replace(config, learning_rate=learning_rate)
+=======
+                                deterministic=args.deterministic, train_limit=args.train_limit)
+>>>>>>> Stashed changes
         model, tokenizer, loss_history, best_epoch = train_encoder(pairs, labels, val_pairs, val_labels, config)
         report = evaluate(model, tokenizer, max_length=config.max_length, batch_size=config.batch_size)
         # All runs from one call share the first run's ID as group_id.

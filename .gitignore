@@ -2,4 +2,5 @@
 /visualizations/
 /SemEval_source
 /data/
-
+.venv/
+__pycache__/

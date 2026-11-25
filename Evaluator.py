@@ -77,7 +77,7 @@ def print_report(report):
 
 
 # Columns added after the first results were recorded; older rows keep these blank.
-LATER_COLUMNS = {"patience", "best_epoch", "deterministic", "group_id"}
+LATER_COLUMNS = {"patience", "best_epoch", "deterministic", "group_id", "train_limit"}
 
 
 def append_result(report, settings, loss_history, best_epoch, path=RESULTS, group_id=None):
