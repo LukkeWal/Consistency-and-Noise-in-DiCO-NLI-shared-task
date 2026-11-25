@@ -5,7 +5,8 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import torch
 from transformers import (AutoModelForSequenceClassification, AutoTokenizer,
-                          DataCollatorWithPadding, EarlyStoppingCallback, Trainer, TrainingArguments)
+                          DataCollatorWithPadding, EarlyStoppingCallback, Trainer, TrainerCallback,
+                          TrainingArguments)
 from transformers.trainer_callback import PrinterCallback, ProgressCallback
 from transformers.trainer_utils import enable_full_determinism, set_seed
 
@@ -25,6 +26,20 @@ class TrainingProgress(ProgressCallback):
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         pass
+
+
+class PruningCallback(TrainerCallback):
+    """Report validation loss to Optuna after each epoch."""
+
+    def __init__(self, trial):
+        self.trial = trial
+
+    def on_evaluate(self, args, state, control, metrics, **kwargs):
+        self.trial.report(metrics["eval_loss"], step=round(state.epoch))
+        if self.trial.should_prune():
+            from optuna import TrialPruned
+
+            raise TrialPruned()
 
 
 @dataclass
@@ -60,7 +75,7 @@ class PairDataset(torch.utils.data.Dataset):
         return tokens
 
 
-def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
+def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig, *, trial=None):
     """Return the best model, tokenizer, loss history and best epoch."""
     if config.model not in MODEL_IDS:
         raise ValueError(f"Unknown model {config.model!r}; choose from {', '.join(MODEL_IDS)}")
@@ -110,7 +125,10 @@ def train_encoder(pairs, labels, val_pairs, val_labels, config: TrainingConfig):
         trainer.remove_callback(ProgressCallback)
         trainer.remove_callback(PrinterCallback)
         trainer.add_callback(TrainingProgress())
-        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=config.patience))
+        if trial is None:
+            trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=config.patience))
+        else:
+            trainer.add_callback(PruningCallback(trial))
         trainer.train()
         train_logs = [entry for entry in trainer.state.log_history if "loss" in entry]
         eval_logs = [entry for entry in trainer.state.log_history if "eval_loss" in entry]

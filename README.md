@@ -13,6 +13,12 @@ See all options with `python Main.py --help`.
 python Main.py --model bert-base-uncased --save
 ```
 
+Tune the learning rate for one encoder with Optuna Hyperband. Trials use epochs as their budget and validation loss on `data/val.csv` for pruning and selection. The model is trained again with the selected learning rate and then evaluated on `data/dev.csv`.
+
+```bash
+python Main.py --model bert-base-uncased --epochs 10 --tune-trials 30
+```
+
 Evaluate a saved model by result ID:
 
 ```bash
