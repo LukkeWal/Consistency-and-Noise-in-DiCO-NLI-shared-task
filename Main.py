@@ -1,5 +1,6 @@
 """Command-line entry point for the DiCo-NLI pipeline."""
 import argparse
+import csv
 from dataclasses import asdict, replace
 import gc
 import json
@@ -47,7 +48,18 @@ def tune_learning_rate(pairs, labels, val_pairs, val_labels, config, n_trials):
     study.optimize(objective, n_trials=n_trials, gc_after_trial=True)
     learning_rate = study.best_params["learning_rate"]
     print(f"Selected learning rate {learning_rate:.6g} (validation loss {study.best_value:.4f})")
-    return learning_rate
+    return learning_rate, study.trials
+
+
+def save_trial_losses(path, trials):
+    """Write validation losses for every reported trial epoch."""
+    path.parent.mkdir(exist_ok=True)
+    with path.open("x", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["trial", "learning_rate", "state", "epoch", "val_loss"])
+        for trial in trials:
+            for epoch, val_loss in sorted(trial.intermediate_values.items()):
+                writer.writerow([trial.number, trial.params["learning_rate"], trial.state.name, epoch, val_loss])
 
 
 def main():
@@ -77,7 +89,6 @@ def main():
     args = parser.parse_args()
     if args.num_seeds < 1:
         parser.error("--num-seeds must be at least 1")
-<<<<<<< Updated upstream
     if args.tune_trials < 0:
         parser.error("--tune-trials must be nonnegative")
     if args.tune_trials:
@@ -85,12 +96,9 @@ def main():
             parser.error("--tune-trials requires --model and --num-seeds 1")
         if not args.epochs.is_integer() or args.epochs < 1:
             parser.error("--tune-trials requires a positive integer --epochs")
-    seed_list = [BASE_SEED + i for i in range(args.num_seeds)]
-=======
     if args.train_limit is not None and args.train_limit < 1:
         parser.error("--train-limit must be at least 1")
     seed_list = [args.seed + i for i in range(args.num_seeds)]
->>>>>>> Stashed changes
     project_dir = Path(__file__).resolve().parent
     if args.evaluate_saved is not None:
         if args.save:
@@ -126,14 +134,13 @@ def main():
                                 gradient_accumulation_steps=args.gradient_accumulation_steps,
                                 weight_decay=args.weight_decay, seed=seed,
                                 precision=args.precision, patience=args.patience,
-<<<<<<< Updated upstream
-                                deterministic=args.deterministic)
-        if args.tune_trials:
-            learning_rate = tune_learning_rate(pairs, labels, val_pairs, val_labels, config, args.tune_trials)
-            config = replace(config, learning_rate=learning_rate)
-=======
                                 deterministic=args.deterministic, train_limit=args.train_limit)
->>>>>>> Stashed changes
+        trials = []
+        if args.tune_trials:
+            learning_rate, trials = tune_learning_rate(
+                pairs, labels, val_pairs, val_labels, config, args.tune_trials,
+            )
+            config = replace(config, learning_rate=learning_rate)
         model, tokenizer, loss_history, best_epoch = train_encoder(pairs, labels, val_pairs, val_labels, config)
         report = evaluate(model, tokenizer, max_length=config.max_length, batch_size=config.batch_size)
         # All runs from one call share the first run's ID as group_id.
@@ -150,6 +157,10 @@ def main():
             tokenizer.save_pretrained(target)
             (target / "training_config.json").write_text(json.dumps(asdict(config), indent=2), encoding="utf-8")
             print(f"Saved model to {target}")
+            if trials:
+                saved_log_path = project_dir / "tuning_runs" / f"{target.name}.csv"
+                save_trial_losses(saved_log_path, trials)
+                print(f"Saved trial validation losses to {saved_log_path}")
         # Free GPU memory before the next seed loads a fresh model.
         del model, tokenizer
         gc.collect()

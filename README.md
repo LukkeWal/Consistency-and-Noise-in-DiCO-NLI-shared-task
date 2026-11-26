@@ -16,8 +16,11 @@ python Main.py --model bert-base-uncased --save
 Tune the learning rate for one encoder with Optuna Hyperband. Trials use epochs as their budget and validation loss on `data/val.csv` for pruning and selection. The model is trained again with the selected learning rate and then evaluated on `data/dev.csv`.
 
 ```bash
-python Main.py --model bert-base-uncased --epochs 10 --tune-trials 30
+python Main.py --model bert-base-uncased --epochs 10 --tune-trials 30 --save
 ```
+With `--save`, a tuning run also writes a CSV in `tuning_runs/` with the learning rate, trial status, and validation loss per epoch.
+The CSV shares the result ID, model name, and seed of the saved model.
+
 For a quick test that the pipeline works, train on a small fixed subset of the training data with `--train-limit`
 (the limit is recorded in `results.csv`, so test runs are not mistaken for real ones):
 
